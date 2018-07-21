@@ -1,0 +1,319 @@
+# ###################################################################################################
+# # PACKAGES 
+# library(ggplot2)
+# library(ggmap)
+# library(nlme)
+# library(lattice)
+# library(MASS)
+# library(corrplot)
+# ###################################################################################################
+# # DATA 
+# dist <- read.table(file = "http://stat.ufl.edu/~winner/data/distang26.dat", 
+#            col.names = c("Airport1", "Airport2", "Population1", "Population2",
+#                          "Distance", "Angle", "Latitude.City1", "Latitude.City2",
+#                          "Longitude.City1", "Longitude.City2"))
+# rout <- read.table("http://www.stat.ufl.edu/~winner/data/longair.dat")
+# colnames(rout) <- c("Route", "Quarter", "Avg.Fare", "Avg.Pass")
+# 
+# head(rout)
+# rout$Route <- as.factor(rout$Route)
+# 
+# 
+# sub1 <- groupedData(formula = Avg.Fare ~ Quarter| Route, data = rout)
+# sub2 <- sub1[1:max(which(rout[,1] == "50")),] #First 50 routes
+# sub.10 <- sub1[1:max(which(rout[,1] == "10")),] #First 50 routes
+# 
+# sub2.1 <- sub1[1:max(which(rout[,1] == "3")),] #First 50 routes
+# 
+# 
+# 
+# 
+# 
+# dim(sub2)
+# dim(rout)
+# str(rout)
+
+
+###################################################################################################
+#map
+states <- map_data("usa")
+#iowa <- subset(states, region %in% c("iowa"))
+p <- ggplot() + geom_polygon(data = states, aes(x=long, y = lat, group = group)) + 
+  coord_fixed(1.3) +   
+  geom_point(data = dist, aes(x = dist$Longitude.City1, y = dist$Latitude.City1), 
+             color = rgb(1,0,1,1/4), size = 1) +
+  geom_point(data = dist, aes(x = dist$Longitude.City2, y = dist$Latitude.City2), 
+             color = rgb(0,0,1,1/4), size = 1) 
+
+p + geom_curve(aes(x = dist$Longitude.City1, y = dist$Latitude.City1,
+                   xend = dist$Longitude.City2, yend = dist$Latitude.City2), 
+               data = dist, curvature = -.2, colour = rgb(1,0,1, .05))
+dev.off()
+###################################################################################################
+#EDA
+attach(rout)
+sum(Avg.Fare <= 0)
+hist(rout$Avg.Fare) #not normal, consider log transformation
+hist(log(rout$Avg.Fare)) #Looks more normal
+qqnorm(log(rout$Avg.Fare))
+qqline(log(rout$Avg.Fare)) #Deviations in the right tail is evident,
+#consider boxcox transformation
+
+box <- MASS::boxcox(rout$Avg.Fare~ rout$Quarter + rout$Avg.Pass, data = rout)
+# optimal lambda
+print(max.bc <- box$x[box$y==max(box$y)])
+newFare <- (rout$Avg.Fare^max.bc - 1)/(max.bc)
+hist(newFare)
+qqnorm(newFare)
+qqline(newFare) #The log-transform is more simple, we will use log
+newFare <- log(rout$Avg.Fare)
+
+plot(Avg.Fare~Quarter, data = rout)
+plot(Avg.Fare[Quarter <=5]~Quarter[Quarter <=5], data = rout)
+
+corrplot(cor(data.frame(Avg.Fare, Quarter, Avg.Pass))) #Covariates seem to be independent
+###################################################################################################
+lme(Avg.Fare ~ 1, random = ~ 1 | Route, data=rout)
+# Linear mixed-effects model fit by REML
+# Data: rout 
+# Log-restricted-likelihood: -552366.6
+# Fixed: Avg.Fare ~ 1 
+# (Intercept) 
+# 202.4471 
+# 
+# Random effects:
+#   Formula: ~1 | Route
+# (Intercept) Residual
+# StdDev:    64.11781 35.94851
+# 
+# Number of Observations: 108602
+# Number of Groups: 4177 
+
+
+
+xyplot(sub2$Avg.Fare~sub2$Quarter, xlab = "Quarter", ylab = "Avg. Fare",
+               type="b",
+               group=sub2$Route,
+               data=sub2,
+               auto.key =F
+        ) #Essentially how much each route made over quarters
+#unconditional growth model
+fit0 <- lme(Avg.Fare ~ Quarter, random = ~ Quarter | Route, data=rout, 
+            method = "ML") #random intercept and slope
+# Linear mixed-effects model fit by REML
+# Data: rout 
+# Log-restricted-likelihood: -539629.6
+# Fixed: Avg.Fare ~ Quarter 
+# (Intercept)     Quarter 
+# 209.772489   -0.542619 
+# 
+# Random effects:
+#   Formula: ~Quarter | Route
+# Structure: General positive-definite, Log-Cholesky parametrization
+# StdDev    Corr  
+# (Intercept) 82.939787 (Intr)
+# Quarter      2.437154 -0.703
+# Residual    30.457995       
+# 
+# Number of Observations: 108602
+# Number of Groups: 4177 
+plot(fit0)
+fit00 <- lme(Avg.Fare ~ Quarter + Avg.Pass, random = ~ Quarter | Route, data=rout, 
+             method = "ML")
+plot(fit00)
+anova(fit0, fit00) #Passenger fare is significant
+
+fit00.int <- lme(Avg.Fare ~ Quarter + Avg.Pass + Quarter*Avg.Pass, 
+                 random = ~ Quarter | Route, data=rout, 
+             method = "ML")
+summary(fit00.int) #Significant but nearly zero, we exclude for simplicity
+
+
+fit1 <-lme(Avg.Fare ~ Quarter + Avg.Pass, 
+            random = ~ 1|Route, method="REML", 
+            data = rout)
+
+fit1.log <-lme(log(Avg.Fare) ~ Quarter + Avg.Pass, 
+           random = ~ 1|Route, method="REML", 
+           data = rout)
+
+summary(fit1); summary(fit1.log)
+plot(fit1) #Simple linear model is probably not good enough
+plot(fit1.log)
+
+fit2 <- gls(Avg.Fare ~ Quarter + Avg.Pass, method="REML", 
+            data = rout)
+anova(fit1,fit2) #The Random intercept route is significant
+
+
+fit.1 <-lme(Avg.Fare ~ Quarter + Avg.Pass, 
+           random = ~ Quarter|Route, method="REML", 
+           data = rout) #Consider a random Slope effect
+summary(fit.1)
+plot(fit.1) #Model indicates a worse fit than before
+anova(fit1, fit.1)
+
+#Consider higher order terms
+fit.2 <-lme(Avg.Fare ~ Quarter + Avg.Pass+ I(Quarter^2) + I(Avg.Pass^2),
+            random = ~ Quarter|Route, method="REML", 
+            data = rout)
+plot(fit.2)
+qqnorm(resid(fit.2)) # Not much change
+#Random Route effect is important
+
+#We will consider joining the quarters together
+x <- 1:26 %% 4 
+x[x==0] <- 4
+rout$Y.Q <- rep(x, 4177)
+
+sub3 <- groupedData(formula = Avg.Fare ~ Y.Q| Route, data = rout)
+sub4 <- sub3[1:max(which(rout[,1] == "50")),] #First 50 routes
+#Subset for each Quarters
+xyplot(sub4$Avg.Fare ~ sub4$Y.Q,
+       type="b",
+       group=sub4$Route,
+       data=sub4,
+       auto.key =F
+)
+fit.var <- lme(Avg.Fare ~ Quarter + Avg.Pass, 
+               random = ~ 1| Route, 
+               weights = varIdent(form= ~ 1 | Y.Q), 
+               data=sub4)
+#Different variance at each time points with only random intercept
+plot(fit.var)
+
+
+plot(sub4) #Does not indicate a similat pattern throughout all routes
+
+# Create yearly data
+temp <- lapply(1:6, rep, 4)
+temp <- c(temp[[1]],temp[[2]],temp[[3]],temp[[4]],temp[[5]],temp[[6]], 7, 7)
+rout$Year <- temp
+
+sub4 <- groupedData(formula = Avg.Fare ~ Year| Route, data = rout)
+sub5 <- sub4[1:max(which(rout[,1] == "50")),] #First 50 routes
+#Subset for each Quarters
+xyplot(sub5$Avg.Fare ~ sub5$Year,
+       type="b",
+       group=sub5$Route,
+       data=sub5,
+       auto.key =F
+)
+# route one individual, 
+#nested within reigon,
+# Time is quarters
+# route i within reigon
+
+#Consider a Yearly model
+fit3 <-lme(Avg.Fare ~ Year + Avg.Pass, 
+           random = ~ 1|Route, method="REML", 
+           data = rout)
+
+fit4 <- gls(Avg.Fare ~ Year + Avg.Pass, method="REML", 
+            data = rout)
+anova(fit3,fit4)
+#Random Rout effect on Route is significant
+plot(fit3) #Still does not indicate a good fit
+
+
+#model 3
+fit5 <-lme(Avg.Fare ~ Year + Avg.Pass, 
+           random = ~ 1|Route, method="ML", 
+           data = rout)
+
+fit6 <-lme(Avg.Fare ~ Y.Q + Avg.Pass, 
+           random = ~ 1|Route, method="ML", 
+           data = rout)
+anova(fit5, fit6) #Almost the same
+
+#Decide to use Y.Q
+
+#passenger or price of fares over time
+
+#Consider taking out the 7th year partial observations
+No.7th.year <- rout[(rout$Quarter != 25) & (rout$Quarter != 26), ]
+sub6 <- groupedData(formula = Avg.Fare ~ Y.Q| Route, data = No.7th.year)
+sub7 <- sub6[1:max(which(No.7th.year[,1] == "50")),] #First 50 routes
+
+
+xyplot(sub7$Avg.Fare ~ sub7$Y.Q,
+       type="b",
+       group=sub7$Route,
+       data=sub7,
+       auto.key =F
+)
+#All not very good models
+#Consider nls logis self starting model
+# nls1 <- nlsList(log(Avg.Fare) ~ SSlogis(Quarter, Asym, xmid, scal), data = sub2)
+# summary(nls1)
+# nls1.full <- coef(nls1)[!is.na(coef(nls1)[,1]),]
+# x <- 1:26
+# plot(Avg.Fare~ Quarter, data=sub2)
+# 
+# curve(200/(1+exp((nls1.full[1,2]- x)/nls1.full[1,3])),
+#       xlim = c(0,26), col = "red")
+# 
+# curve(exp(predict(nls1, newdata = data.frame(Quarter=x))), add=TRUE, col = "red")
+# #Generally a terrible model
+# 
+# #Consider groupings nlsList() model
+# 
+# # #Consider a Nonlinear model Logistic: From data of only first 50 routes
+# nls11 <- nlsList(Avg.Fare~ SSlogis(Quarter, Asym, xmid, scale), data = sub2.1, control = nls.control(maxiter = 100))
+# 
+# fit.nlme<-nlme(Avg.Fare ~  Asym / (1 + exp((xmid -Quarter)/scal)), data = sub2.1, 
+#                fixed = Asym + xmid + scal ~ 1, random = Asym + xmid + scal ~ 1, 
+#                start = coef(nls11))
+# 
+# 
+# 
+# fit.nlme<-nlme(Avg.Fare ~  Asym / (1 + exp((xmid -Quarter)/scal)), data = sub2.1, 
+#                fixed = Asym + xmid + scal ~ 1, random = Asym + xmid + scal ~ 1, 
+#                start = , 
+#                control = nlmeControl(maxIter = 50))
+# 
+# fit.nlme2<-nlme(nlsList1)
+# plot(augPred(fit.nlme))
+# 
+# nlme(nlsList1)
+# 
+
+log.lme <- lme(log(Avg.Fare) ~ Quarter + I(Quarter^2)+ Avg.Pass + I(Avg.Pass^2), 
+     data = sub2, random = ~1|Route)
+plot(log.lme)
+qqnorm(resid(log.lme)); qqline(resid(log.lme), col = "red")
+summary(log.lme)
+
+library(ggplot2)
+p <- ggplot(sub2, aes(x=Quarter, y=Avg.Fare, colour=Route)) +
+  geom_point(size=.5) +
+  geom_line(aes(y=exp(fitted(log.lme)), group=Route), size = .5) +
+  theme_bw(base_size=22) 
+print(p)
+
+plot(exp(fitted(log.lme)), sub2$Avg.Fare)
+abline(a = 0, b = 1, col = 'red')
+
+
+summary(log.lme)
+#
+#
+#
+#
+set.seed(700)
+samp <- sort(sample( 1:4177,50, replace = F))
+samp <- as.character(samp)
+rand.samp <- data.both[which(data.both[,1] %in% samp),]
+
+log.lme.rand <- lme(log(Avg.Fare) ~ Quarter + I(Quarter^2)+ log(Avg.Pass), 
+               data = rand.samp, random = ~1|Route)
+plot(log.lme.rand)
+qqnorm(resid(log.lme.rand)); qqline(resid(log.lme.rand), col = "red")
+summary(log.lme.rand)
+
+library(ggplot2)
+p <- ggplot(rand.samp, aes(x=Quarter, y=Avg.Fare, color = Route )) +
+  geom_point(size=.5) +
+  geom_line(aes(y=exp(fitted(log.lme.rand)), group=Route), size = .5) +
+  theme_bw(base_size=22) 
+print(p)
